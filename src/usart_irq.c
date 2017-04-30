@@ -255,26 +255,10 @@ int main(void)
 
 void usart1_isr(void)
 {
-	uint32_t	reg;
-  uint32_t  n;
+	// uint32_t	reg;
+  uint32_t  n = 1;
 
   // rx
- 
-/* 
-	do {
-		reg = USART_SR(USART1);
-    //  usart_is_recv_ready(uint32_t usart)
-		if (reg & USART_SR_RXNE) {
-
-
-       // TODO uint16_t usart_recv(uint32_t usart)
-      unsigned char ch = USART_DR(USART1);
-
-      write(&a.receive, &ch, 1);
-		}
-	} while ((reg & USART_SR_RXNE) != 0); //  can read back-to-back interrupts 
-  */
- 
 	while ((USART_SR(USART1) & USART_SR_RXNE) != 0) {
       uint16_t ch = USART_DR(USART1);
       write(&a.receive, &ch, 1);
@@ -287,6 +271,7 @@ void usart1_isr(void)
   }
 */
   // tx
+/*
   do {
 		reg = USART_SR(USART1);
     
@@ -298,15 +283,26 @@ void usart1_isr(void)
       if(n == 1) {
         // write it to usart
         USART_DR(USART1) = (uint16_t) ch & 0xff;
-        // use this instead 
-        // usart_send(uint32_t usart, uint16_t data)
-
       } else {
         // else nothing more to do - so disable tx interuppt.
         usart_disable_tx_interrupt(USART1);
       }
     }
   } while (n > 0 && (reg & USART_SR_TXE) != 0); 
+*/
+
+  while(n > 0 && (USART_SR(USART1) & USART_SR_TXE) != 0) {
+      unsigned char ch = 0;
+      n = read(&a.transmit, &ch, 1);
+      if(n == 1) {
+        // write it to usart
+        USART_DR(USART1) = (uint16_t) ch & 0xff;
+      } else {
+        // else nothing more to do - so disable tx interuppt.
+        // will this clear the register as well - or will it keep looping?
+        usart_disable_tx_interrupt(USART1);
+      }
+  }
 
 }
 
