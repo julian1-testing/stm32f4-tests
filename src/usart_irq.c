@@ -57,6 +57,10 @@ static void usart_setup(void)
 	/* Enable USART1 Receive interrupt. */
 	usart_enable_rx_interrupt(USART1);
 
+  // enable tx interuppt - to tell us when the tx buf is ready to write	
+  // ok, there's a problem - they both use the same byte
+  // usart_enable_tx_interrupt(USART1);
+
 	/* Finally enable the USART. */
 	usart_enable(USART1);
 
@@ -81,6 +85,8 @@ typedef struct Buffer
   // be better to use an index -- easier to do the write and read pointers
   unsigned wi;
   unsigned ri;
+
+  // TODO add size in here - make dynamic?
   char buf[1000];
 } Buffer;
 
@@ -89,13 +95,8 @@ typedef struct Buffer
 typedef struct App {
 
   Buffer  receive;
-/*
-  // be better to use an index -- easier to do the write and read pointers
-  unsigned wi;
-  // char *rp;
-  unsigned ri;
-  char buf[1000];
-*/
+
+  Buffer  transmit;
 
 } App;
 
@@ -103,6 +104,7 @@ App a;
 
 
 ////////////////////////////////////////////
+/*
 #define CONSOLE_UART USART1
 
 void console_putc(char c);
@@ -111,23 +113,29 @@ void console_puts(char *s);
 void console_putc(char c)
 {
   uint32_t  reg;
+
+  // this just loops until, the the txe is empty?
   do {
     reg = USART_SR(CONSOLE_UART);
   } while ((reg & USART_SR_TXE) == 0); 
   USART_DR(CONSOLE_UART) = (uint16_t) c & 0xff;
 }
 
+
 void console_puts(char *s)
 {
   while (*s != '\000') {
     console_putc(*s);
-    /* Add in a carraige return, after sending line feed */
+    // Add in a carraige return, after sending line feed 
     if (*s == '\n') {
       console_putc('\r');
     }
     s++;
   }
 }
+*/
+
+
 ////////////////////////////////////////////
 
 // the problem is the shrink operattion - where we copy and then adjust the pointer back
@@ -156,7 +164,7 @@ static void write(Buffer *a_, void *buf, size_t count)
 
 			a_->buf[a_->wi++] = *p++;
 
-      // wrap around...
+      // handle ri wrap around...
       if(a_->wi == 1000) 
         a_->wi = 0;
     }
@@ -179,7 +187,7 @@ static size_t read(Buffer *a_, void *buf, size_t count)
     // write the output buffer
     *p++ = a_->buf[a_->ri++];
 
-    // handle wrap around
+    // handle ri wrap around
     if(a_->ri == 1000) 
       a_->ri = 0;
   }  
@@ -209,6 +217,7 @@ int main(void)
         // we have data...
 		    gpio_toggle(GPIOE, GPIO0);
 
+        // trim what we read
         if(buf[n - 1] == '\n')
           buf[n - 1] = 0;
         else
@@ -216,15 +225,26 @@ int main(void)
 
         // now we want to report what was written
         char s[1000];
-        snprintf(s, 1000, "you wrote %d chars '%s'\n> ", n, buf);
+        n = snprintf(s, 1000, "you wrote %d chars '%s'\n> ", n, buf);
 
-        console_puts(s);
+        // console_puts(s);
+        // write the output buffer
+        write(&a.transmit, s, n);
+
+        // enable tx interuppt.
+        usart_enable_tx_interrupt(USART1);
+
+        // and trigger interupt... to start writing...
+        usart1_isr();
+
     }
 
 	}
 
 	return 0;
 }
+
+// ok it's not continuing to get the interupt - 
 
 /*
   important,
@@ -236,6 +256,7 @@ int main(void)
 void usart1_isr(void)
 {
 	uint32_t	reg;
+  uint32_t  n;
 
 	do {
 		reg = USART_SR(USART1);
@@ -244,25 +265,40 @@ void usart1_isr(void)
       unsigned char ch = USART_DR(USART1);
 
       write(&a.receive, &ch, 1);
-/*
-      // write the buffer
-			a.buf[a.wi] = USART_DR(USART1);
-
-      // wrap around
-      if(++a.wi == 1000)
-        a.wi = 0;
-*/
-
-			/* Check for "overrun" */
-      /*
-			i = (recv_ndx_nxt + 1) % RECV_BUF_SIZE;
-			if (i != recv_ndx_cur) {
-				recv_ndx_nxt = i;
-			}
-      */
 		}
 	} while ((reg & USART_SR_RXNE) != 0); /* can read back-to-back interrupts */
+
+
+  do {
+		reg = USART_SR(USART1);
+		if ((reg & USART_SR_TXE) != 0) {  // white transmit is empty
+
+      // see - if there's a byte to read from transmit buffer
+      unsigned char ch = 0;
+      n = read(&a.transmit, &ch, 1);
+      if(n == 1) {
+
+        // and write to usart
+        USART_DR(USART1) = (uint16_t) ch & 0xff;
+      } else if (n == 0) {
+
+        // disable tx interuppt.
+        usart_disable_tx_interrupt(USART1);
+      }
+    }
+  } while (n > 0 && (reg & USART_SR_TXE) != 0); 
 }
+
+
+/*
+  // this just loops until, the the txe is empty?
+  do {
+    reg = USART_SR(CONSOLE_UART);
+  } while ((reg & USART_SR_TXE) == 0); 
+  USART_DR(CONSOLE_UART) = (uint16_t) c & 0xff;
+*/
+
+
 
 #if 0
 void usart1_isr___(void)
