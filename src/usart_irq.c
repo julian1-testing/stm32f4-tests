@@ -73,13 +73,29 @@ static void gpio_setup(void)
 }
 
 
+
+// ok. we want want to factor, the ring buffers....
+
+typedef struct Buffer 
+{
+  // be better to use an index -- easier to do the write and read pointers
+  unsigned wi;
+  unsigned ri;
+  char buf[1000];
+} Buffer;
+
+
+
 typedef struct App {
 
+  Buffer  receive;
+/*
   // be better to use an index -- easier to do the write and read pointers
   unsigned wi;
   // char *rp;
   unsigned ri;
   char buf[1000];
+*/
 
 } App;
 
@@ -124,12 +140,30 @@ void console_puts(char *s)
 // actually, i = ++i % 1000
 
 // use the ring buffer. and then implement a, int read(int sz, char *buf) operation on top of that 
-
-
 // implement a non-blocking write buffer as well... but first just do a blocking write.
 
 
-static size_t read(App *a_, void *buf, size_t count)
+
+
+static void write(Buffer *a_, void *buf, size_t count)
+{
+    // TODO - put the size of the ring buffer in the buffer structure and use it.
+
+    size_t i = 0;
+    char *p = buf;
+
+    for(i = 0; i < count; ++i) {
+
+			a_->buf[a_->wi++] = *p++;
+
+      // wrap around...
+      if(a_->wi == 1000) 
+        a_->wi = 0;
+    }
+}
+
+
+static size_t read(Buffer *a_, void *buf, size_t count)
 {
   size_t i = 0;
   char *p = buf;
@@ -142,7 +176,7 @@ static size_t read(App *a_, void *buf, size_t count)
     i < count && a_->ri != a_->wi; 
     ++i) {
 
-    // write buffer
+    // write the output buffer
     *p++ = a_->buf[a_->ri++];
 
     // handle wrap around
@@ -167,7 +201,7 @@ int main(void)
 	while (1) {
 
     char buf[101];
-    size_t n = read(&a, buf, 100);
+    size_t n = read( &a.receive, buf, 100);
 
 
     if(n != 0) {
@@ -207,13 +241,17 @@ void usart1_isr(void)
 		reg = USART_SR(USART1);
 		if (reg & USART_SR_RXNE) {
 
+      unsigned char ch = USART_DR(USART1);
+
+      write(&a.receive, &ch, 1);
+/*
       // write the buffer
 			a.buf[a.wi] = USART_DR(USART1);
 
       // wrap around
       if(++a.wi == 1000)
         a.wi = 0;
-
+*/
 
 			/* Check for "overrun" */
       /*
