@@ -20,6 +20,7 @@
 
 int _write(int file, char *ptr, int len);
 
+
 static void clock_setup(void)
 {
 	/* Enable GPIOE clock for LED & USARTs. */
@@ -30,8 +31,10 @@ static void clock_setup(void)
   // JA
 	rcc_periph_clock_enable(RCC_USART1);
 
+  // dac
   rcc_periph_clock_enable(RCC_DAC);
 }
+
 
 static void usart_setup(void)
 {
@@ -106,6 +109,7 @@ static void dac_setup(void)
 
 typedef struct Buffer 
 {
+  // ring buffer
   // be better to use an index -- easier to do the bwrite and bread pointers
   unsigned wi;
   unsigned ri;
@@ -177,6 +181,8 @@ int _write(int file, char *ptr, int len)
     usart_enable_tx_interrupt(USART1);
 
     // and call trigger interupt... to start writing...
+    // do we even need to call this... or will we get an interupt as soon
+    // as we do usart_enable_tx_interupt?...
     usart1_isr();
 
     return len;
@@ -189,7 +195,14 @@ int _write(int file, char *ptr, int len)
 
 int main(void)
 {
+  // state should be moved into application...
+  // Also don't expose app to interupt vector - just the ring-buffer pointers
   uint16_t target = 0xffff;
+
+  // move into App
+  // the command buffer...
+  char buf[101];
+  *buf = 0;
 
 	clock_setup();
 	led_setup();
@@ -201,14 +214,40 @@ int main(void)
   printf("hithere!");
 
 	while (1) {
+  
+    // non-blocking update command buffer. 
+    // command buffer
+    int len = strlen(buf);
+    int bytes = 1;
+    uint8_t ch = 0;
 
-    char buf[101];
-    size_t n = bread( &a.receive, buf, 100);
 
-    // we need to split by \n and handle properly.... 
+    // TODO change to do loop...
+    // while(bytes > 0 && ch != '\n' && len < 100) {
+    while(1)  {
+        bytes = bread(&a.receive, &ch, 1);
+        if(bytes == 0 || ch == '\n')
+            break;
+  
+        buf[len++] = ch; 
+    } 
 
 
-    if(n != 0) {
+    buf[len] = 0;
+
+
+
+    // we are going to have to check every char for \n to handle properly.... 
+    // so we don't actually want to read past
+    // we can't push characters back into the ring buffer, so should read them one at a time... 
+    // so rather than strncat() the command buffer - we should attempt to only get a character at a time.
+    // beahvior should be cisco like. eg. stdout still gets printed.
+      
+
+    // rather than doing fgets
+    // we are going to have to take to 
+
+    if(ch == '\n') {
 
         if(target == 0xffff)
           target = 0;
@@ -224,16 +263,13 @@ int main(void)
         // toggle led...
 		    gpio_toggle(GPIOE, GPIO0);
 
-        // trim what we bread
-        if(buf[n - 1] == '\n')
-          buf[n - 1] = 0;
-        else
-          buf[n] = 0;
+
+        printf("*** you wrote %d chars '%s'\n> ", len, buf);
 
 
-        printf("*** you wrote %d chars '%s'\n> ", n, buf);
-
-    }
+        // reset the buffer
+        *buf = 0;
+      }
 	}
 
 	return 0;
