@@ -211,7 +211,10 @@ int main(void)
 
   memset(&a, 0, sizeof(App));
 
-  printf("hithere!");
+  // is there an easier way to set the output buffer to be non-buffered?
+  // or is it good?
+  printf("hithere!\n");
+  fflush(NULL);
 
 	while (1) {
   
@@ -247,7 +250,7 @@ int main(void)
         else
           target = 0xffff;
 
-        printf("1 target is %d", target);
+        printf("dac target value now %d\n", target);
 
         dac_load_data_buffer_single(target, RIGHT12, CHANNEL_2);
         dac_software_trigger(CHANNEL_2);
@@ -255,7 +258,7 @@ int main(void)
         // toggle led...
 		    gpio_toggle(GPIOE, GPIO0);
 
-        printf("*** you wrote %d chars '%s'\n", len, buf);
+        printf("you wrote %d chars '%s'\n", len, buf);
         printf("> ");
         fflush(NULL);
 
