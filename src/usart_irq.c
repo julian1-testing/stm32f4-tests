@@ -215,26 +215,19 @@ int main(void)
 
 	while (1) {
   
-    // non-blocking update command buffer. 
+
+    // non-blocking reading into the command buffer. 
     // command buffer
     int len = strlen(buf);
-    int bytes = 1;
     uint8_t ch = 0;
 
-
-    // TODO change to do loop...
-    // while(bytes > 0 && ch != '\n' && len < 100) {
     while(1)  {
-        bytes = bread(&a.receive, &ch, 1);
+        size_t bytes = bread(&a.receive, &ch, 1);
         if(bytes == 0 || ch == '\n')
             break;
-  
         buf[len++] = ch; 
     } 
-
-
     buf[len] = 0;
-
 
 
     // we are going to have to check every char for \n to handle properly.... 
@@ -259,15 +252,14 @@ int main(void)
         dac_load_data_buffer_single(target, RIGHT12, CHANNEL_2);
         dac_software_trigger(CHANNEL_2);
   
-
         // toggle led...
 		    gpio_toggle(GPIOE, GPIO0);
 
+        printf("*** you wrote %d chars '%s'\n", len, buf);
+        printf("> ");
+        fflush(NULL);
 
-        printf("*** you wrote %d chars '%s'\n> ", len, buf);
-
-
-        // reset the buffer
+        // reset the command buffer - this is right - everything else is in the ring buffer.
         *buf = 0;
       }
 	}
