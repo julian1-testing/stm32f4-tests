@@ -58,15 +58,13 @@ static void usart_setup(void)
 	usart_enable_rx_interrupt(USART1);
 
   // enable tx interuppt - to tell us when the tx buf is ready to write	
-  // ok, there's a problem - they both use the same byte
   // usart_enable_tx_interrupt(USART1);
 
 	/* Finally enable the USART. */
 	usart_enable(USART1);
-
-
-
 }
+
+
 
 static void gpio_setup(void)
 {
@@ -78,15 +76,13 @@ static void gpio_setup(void)
 
 
 
-// ok. we want want to factor, the ring buffers....
-
 typedef struct Buffer 
 {
   // be better to use an index -- easier to do the write and read pointers
   unsigned wi;
   unsigned ri;
-
-  // TODO add size in here - make dynamic?
+  // unsigned size;
+  // TODO make dynamic?
   char buf[1000];
 } Buffer;
 
@@ -95,7 +91,6 @@ typedef struct Buffer
 typedef struct App {
 
   Buffer  receive;
-
   Buffer  transmit;
 
 } App;
@@ -103,96 +98,40 @@ typedef struct App {
 App a;
 
 
-////////////////////////////////////////////
-/*
-#define CONSOLE_UART USART1
 
-void console_putc(char c);
-void console_puts(char *s);
 
-void console_putc(char c)
+static void write(Buffer *r, void *buf, size_t count)
 {
-  uint32_t  reg;
-
-  // this just loops until, the the txe is empty?
-  do {
-    reg = USART_SR(CONSOLE_UART);
-  } while ((reg & USART_SR_TXE) == 0); 
-  USART_DR(CONSOLE_UART) = (uint16_t) c & 0xff;
-}
-
-
-void console_puts(char *s)
-{
-  while (*s != '\000') {
-    console_putc(*s);
-    // Add in a carraige return, after sending line feed 
-    if (*s == '\n') {
-      console_putc('\r');
-    }
-    s++;
-  }
-}
-*/
-
-
-////////////////////////////////////////////
-
-// the problem is the shrink operattion - where we copy and then adjust the pointer back
-// is not going to work.  - because an interupt could occur in the middle of it.
-
-// i think that's why the ring works - one just keeps going around in a circle... with a write pointer, 
-// and a read pointer.
-
-// ring buffer - just needs to be i % 1000 - really quite easy... ahhh except for  
-// actually, i = ++i % 1000
-
-// use the ring buffer. and then implement a, int read(int sz, char *buf) operation on top of that 
-// implement a non-blocking write buffer as well... but first just do a blocking write.
-
-
-
-
-static void write(Buffer *a_, void *buf, size_t count)
-{
-    // TODO - put the size of the ring buffer in the buffer structure and use it.
-
     size_t i = 0;
     char *p = buf;
 
     for(i = 0; i < count; ++i) {
 
-			a_->buf[a_->wi++] = *p++;
+			r->buf[r->wi++] = *p++;
 
       // handle ri wrap around...
-      if(a_->wi == 1000) 
-        a_->wi = 0;
+      if(r->wi == 1000) 
+        r->wi = 0;
     }
 }
 
 
-static size_t read(Buffer *a_, void *buf, size_t count)
+static size_t read(Buffer *r, void *buf, size_t count)
 {
   size_t i = 0;
   char *p = buf;
 
-  // we can't just subtract - because of wrap around...
-  // therefore it has to be a loop
-  // if count exceeds buffer - then that's a problem 
-
-  for(i = 0; 
-    i < count && a_->ri != a_->wi; 
-    ++i) {
+  for(i = 0; i < count && r->ri != r->wi; ++i) {
 
     // write the output buffer
-    *p++ = a_->buf[a_->ri++];
+    *p++ = r->buf[r->ri++];
 
     // handle ri wrap around
-    if(a_->ri == 1000) 
-      a_->ri = 0;
+    if(r->ri == 1000) 
+      r->ri = 0;
   }  
 
-  // return number of characters written
+  // number of chars read
   return i;
 }
 
@@ -234,11 +173,9 @@ int main(void)
         // enable tx interuppt.
         usart_enable_tx_interrupt(USART1);
 
-        // and trigger interupt... to start writing...
+        // and call trigger interupt... to start writing...
         usart1_isr();
-
     }
-
 	}
 
 	return 0;
@@ -255,24 +192,22 @@ int main(void)
 
 void usart1_isr(void)
 {
-  // uint32_t  n = 1;
-
-  // rx
+  // handle rx
 	while ((USART_SR(USART1) & USART_SR_RXNE) != 0) {
       uint16_t ch = USART_DR(USART1);
       write(&a.receive, &ch, 1);
   } 
 
-  // tx
+  // handle tx
   while((USART_SR(USART1) & USART_SR_TXE) != 0) {
-      // check if we have chars to buffer chars to transmit 
+      // check if more chars to transmit 
       unsigned char ch = 0;
       uint32_t n = read(&a.transmit, &ch, 1);
       if(n == 1) {
-        // if more then write to usart
+        // yes, then write to usart
         USART_DR(USART1) = (uint16_t) ch & 0xff;
       } else {
-        // no more - then disable tx interupt and break
+        // no, then disable tx interupt and break from loop
         usart_disable_tx_interrupt(USART1);
         break;
       }
@@ -350,5 +285,53 @@ void usart1_isr___(void)
 }
 
 #endif
+
+
+////////////////////////////////////////////
+/*
+#define CONSOLE_UART USART1
+
+void console_putc(char c);
+void console_puts(char *s);
+
+void console_putc(char c)
+{
+  uint32_t  reg;
+
+  // this just loops until, the the txe is empty?
+  do {
+    reg = USART_SR(CONSOLE_UART);
+  } while ((reg & USART_SR_TXE) == 0); 
+  USART_DR(CONSOLE_UART) = (uint16_t) c & 0xff;
+}
+
+
+void console_puts(char *s)
+{
+  while (*s != '\000') {
+    console_putc(*s);
+    // Add in a carraige return, after sending line feed 
+    if (*s == '\n') {
+      console_putc('\r');
+    }
+    s++;
+  }
+}
+*/
+
+
+////////////////////////////////////////////
+
+// the problem is the shrink operattion - where we copy and then adjust the pointer back
+// is not going to work.  - because an interupt could occur in the middle of it.
+
+// i think that's why the ring works - one just keeps going around in a circle... with a write pointer, 
+// and a read pointer.
+
+// ring buffer - just needs to be i % 1000 - really quite easy... ahhh except for  
+// actually, i = ++i % 1000
+
+// use the ring buffer. and then implement a, int read(int sz, char *buf) operation on top of that 
+// implement a non-blocking write buffer as well... but first just do a blocking write.
 
 
