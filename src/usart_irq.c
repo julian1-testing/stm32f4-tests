@@ -5,6 +5,8 @@
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/cm3/nvic.h>
 
+#include <libopencm3/stm32/dac.h>
+
 // /usr/arm-linux-gnueabi/include/string.h
 #include <string.h>
 #include <stdlib.h> // malloc
@@ -12,7 +14,11 @@
 #include <stdio.h> // sprintf?
 
 
+#include <errno.h>
+// #include <stdio.h>
+#include <unistd.h>
 
+int _write(int file, char *ptr, int len);
 
 static void clock_setup(void)
 {
@@ -57,7 +63,7 @@ static void usart_setup(void)
 	/* Enable USART1 Receive interrupt. */
 	usart_enable_rx_interrupt(USART1);
 
-  // enable tx interuppt - to tell us when the tx buf is ready to write	
+  // enable tx interuppt - to tell us when the tx buf is bready to bwrite	
   // usart_enable_tx_interrupt(USART1);
 
 	/* Finally enable the USART. */
@@ -66,19 +72,39 @@ static void usart_setup(void)
 
 
 
-static void gpio_setup(void)
+static void led_setup(void)
 {
-	/* Setup GPIO pin GPIO12 on GPIO port D for LED. */
-	// gpio_mode_setup(GPIOE, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO12);
-
-  gpio_mode_setup(GPIOE, GPIO_MODE_OUTPUT, GPIO_OTYPE_OD, GPIO0); // JA
+  // led
+  gpio_mode_setup(GPIOE, GPIO_MODE_OUTPUT, GPIO_OTYPE_OD, GPIO0); 
 }
+
+
+
+static void dac_setup(void)
+{
+  // two dacs - seems to be pin pa4, and pa5 
+  // http://www.sdvos.org/images/stm32f4discovery-pinout.png
+
+  // using led - for dac output
+  // also see void dac_software_trigger(data_channel dac_channel);
+
+  // perhaps the 
+
+  gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO5);  // PA05   DAC2
+
+  dac_disable(CHANNEL_2);
+  dac_disable_waveform_generation(CHANNEL_2);
+  dac_enable(CHANNEL_2);
+  dac_set_trigger_source(DAC_CR_TSEL2_SW);
+}
+
+
 
 
 
 typedef struct Buffer 
 {
-  // be better to use an index -- easier to do the write and read pointers
+  // be better to use an index -- easier to do the bwrite and bread pointers
   unsigned wi;
   unsigned ri;
   // unsigned size;
@@ -100,7 +126,7 @@ App a;
 
 
 
-static void write(Buffer *r, void *buf, size_t count)
+static void bwrite(Buffer *r, void *buf, size_t count)
 {
     size_t i = 0;
     char *p = buf;
@@ -116,14 +142,14 @@ static void write(Buffer *r, void *buf, size_t count)
 }
 
 
-static size_t read(Buffer *r, void *buf, size_t count)
+static size_t bread(Buffer *r, void *buf, size_t count)
 {
   size_t i = 0;
   char *p = buf;
 
   for(i = 0; i < count && r->ri != r->wi; ++i) {
 
-    // write the output buffer
+    // bwrite the output buffer
     *p++ = r->buf[r->ri++];
 
     // handle ri wrap around
@@ -131,50 +157,80 @@ static size_t read(Buffer *r, void *buf, size_t count)
       r->ri = 0;
   }  
 
-  // number of chars read
+  // number of chars bread
   return i;
+}
+
+
+int _write(int file, char *ptr, int len)
+{
+  // overloaded for printf etc....
+
+  if (file == STDOUT_FILENO || file == STDERR_FILENO) {
+
+    // bwrite the output buffer
+    bwrite(&a.transmit, ptr, len);
+
+    // enable tx interuppt.
+    usart_enable_tx_interrupt(USART1);
+
+    // and call trigger interupt... to start writing...
+    usart1_isr();
+
+    return len;
+  }
+  errno = EIO;
+  return -1;
 }
 
 
 
 int main(void)
 {
+  uint16_t target = 0xffff;
+
 	clock_setup();
-	gpio_setup();
+	led_setup();
+  dac_setup();
 	usart_setup();
 
   memset(&a, 0, sizeof(App));
 
+  printf("hithere!");
+
 	while (1) {
 
     char buf[101];
-    size_t n = read( &a.receive, buf, 100);
+    size_t n = bread( &a.receive, buf, 100);
+
+    // we need to split by \n and handle properly.... 
 
 
     if(n != 0) {
 
-        // we have data...
+        if(target == 0xffff)
+          target = 0;
+        else
+          target = 0xffff;
+
+        printf("1 target is %d", target);
+
+        dac_load_data_buffer_single(target, RIGHT12, CHANNEL_2);
+        dac_software_trigger(CHANNEL_2);
+  
+
+        // toggle led...
 		    gpio_toggle(GPIOE, GPIO0);
 
-        // trim what we read
+        // trim what we bread
         if(buf[n - 1] == '\n')
           buf[n - 1] = 0;
         else
           buf[n] = 0;
 
-        // now we want to report what was written
-        char s[1000];
-        n = snprintf(s, 1000, "you wrote %d chars '%s'\n> ", n, buf);
 
-        // console_puts(s);
-        // write the output buffer
-        write(&a.transmit, s, n);
+        printf("*** you wrote %d chars '%s'\n> ", n, buf);
 
-        // enable tx interuppt.
-        usart_enable_tx_interrupt(USART1);
-
-        // and call trigger interupt... to start writing...
-        usart1_isr();
     }
 	}
 
@@ -195,16 +251,16 @@ void usart1_isr(void)
   // handle rx
 	while ((USART_SR(USART1) & USART_SR_RXNE) != 0) {
       uint16_t ch = USART_DR(USART1);
-      write(&a.receive, &ch, 1);
+      bwrite(&a.receive, &ch, 1);
   } 
 
   // handle tx
   while((USART_SR(USART1) & USART_SR_TXE) != 0) {
       // check if more chars to transmit 
       unsigned char ch = 0;
-      uint32_t n = read(&a.transmit, &ch, 1);
+      uint32_t n = bread(&a.transmit, &ch, 1);
       if(n == 1) {
-        // yes, then write to usart
+        // yes, then bwrite to usart
         USART_DR(USART1) = (uint16_t) ch & 0xff;
       } else {
         // no, then disable tx interupt and break from loop
@@ -325,13 +381,13 @@ void console_puts(char *s)
 // the problem is the shrink operattion - where we copy and then adjust the pointer back
 // is not going to work.  - because an interupt could occur in the middle of it.
 
-// i think that's why the ring works - one just keeps going around in a circle... with a write pointer, 
-// and a read pointer.
+// i think that's why the ring works - one just keeps going around in a circle... with a bwrite pointer, 
+// and a bread pointer.
 
 // ring buffer - just needs to be i % 1000 - really quite easy... ahhh except for  
 // actually, i = ++i % 1000
 
-// use the ring buffer. and then implement a, int read(int sz, char *buf) operation on top of that 
-// implement a non-blocking write buffer as well... but first just do a blocking write.
+// use the ring buffer. and then implement a, int bread(int sz, char *buf) operation on top of that 
+// implement a non-blocking bwrite buffer as well... but first just do a blocking bwrite.
 
 
