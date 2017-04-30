@@ -29,6 +29,8 @@ static void clock_setup(void)
 	/* Enable clocks for USART1. */
   // JA
 	rcc_periph_clock_enable(RCC_USART1);
+
+  rcc_periph_clock_enable(RCC_DAC);
 }
 
 static void usart_setup(void)
